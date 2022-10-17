@@ -1,0 +1,186 @@
+Full Workflow of Refrigeration Problem
+
+Input Taken :
+	Set_temp_low -- Lower temperature limit set by the user
+	Set_temp_high -- Higher temperature limit value set by user
+	set_curr_high -- The rated Current of the given device 
+
+Parameters Used for Predicting the output -- > PF , Current , Temperature , Time
+
+Parameters Saved :
+	Event : Represents the type of event that took place in past (eg. Defrost , Door Opening)
+	Flag : Represents wheather the temprature is increasing or decreasing 
+		|__ For Temperature Rising flag == 0
+		|__ For temperature Falling flag == 1
+	Flag_for_event : Represents the type of event taking place 
+		|__ For Flag_for_event == 0 , normal condition 
+		|__ For Flag_for_event == 1 , Door Opening
+		|__ For Flag_for_event == 2 , Defrost with area greater than 100
+	Area : Represents the area calculated in previous cycle
+  
+Algorithm used :
+
+index = 4 // Accessing the last index of the json file 
+
+//Initializing all the parameters 
+area = 0
+event = "null"
+ 
+//loading of json data 
+data = json.load(file_loc)
+
+// calculating the time difference between current and previous time index 
+time1 = datetime(data["DataArray"]["Time"][index])
+time2 = datetime(data["DataArray"]["Time"][index-1])
+if (time1>time2) :
+	time_diff = (time2 - time1).total_seconds()
+else :
+	time_diff = (time1 - time2).total_seconds()
+
+//if time difference more than 100 seconds , Data loss
+if (time_diff) >= 100 :
+	cout -- > Data loss
+	event = "Data Loss "
+
+//Checking if the data recieved is more than or less that 15 seconds 
+time_diff_set = time_diff % 15
+
+// for the values less than 15 seconds
+if (time_diff_set == 0) :
+	time_diff_set = 1
+
+//Setting of the threashold temperature (the temperature difference after which it is marked as Door Opening ) 
+//for time_diff = 15 seconds , the threashold will be 0.76
+time_diff_set = 0.76 * time_diff_set 	
+
+//Checking for the Falling temperature curve 
+if (data["DataArray"]["Temp"][index]<data["DataArray"]["Temp"][index-1]):
+	flag = 1 
+
+//for flag==1 i.e. the falling curve 
+
+if (flag == 1): 
+            
+	// checking if the temperature starts rising back
+      if(data["DataArray"]["Temp"][index-1]<data["DataArray"]["Temp"][index]):
+    		cout -- > Curve rising back     
+            event = "temp_increase_start"
+		
+		// setting all parameter to null
+            flag = 0
+            flag_event = 0 
+            area = 0            
+    
+      // checking if dooropening took place in rising curve  
+	if (flag_event == 1 ) :
+            cout -- > "Door closed"
+            event = "Door Closed"
+            flag_event = 0 
+                
+       //checking if defrost took place in rising curve
+       if (flag_event == 2) :
+            flag_event = 2
+            event = "Post Defrost"
+            cout -- > Post defrost taking place 
+
+// checking for the rising slope 
+if (data["DataArray"]["Temp"][index]>=data["DataArray"]["Temp"][index-1] and flag == 0):
+
+	// checking if the curve is still increasing under a defrost , when compressor not runnning at 80 percent efficiancy (The upper cuve in a defrost) 
+	if(flag_event == 2 and data["DataArray"]["curr"][index] < 0.8 * set_curr_high) :    
+		
+		// calculating the area between previous and current point 
+            temp_area_calc = [data["DataArray"]["Temp"][index-1] - (set_temp_low) , data["DataArray"]["Temp"][index] - (set_temp_low)]
+            // range_area_temp calculates the are between two points 
+		area = area + range_area_temp(temp_area_calc)
+            
+		event = "defrost"
+            cout -- > defrost
+       
+	// checking if door opening took place for a long time such that area crosees 100     
+      elif (flag_event == 1 and area > 100) :
+		//adding dooropening area to the previous door opening area
+            temp_area_calc = [data["DataArray"]["Temp"][index-1] - (set_temp_low) , data["DataArray"]["Temp"][index] - (set_temp_low)]
+            area = area + range_area_temp(temp_area_calc)
+            event = "Door open"
+            cout -- > "Door open Alert !!"
+                
+                
+      //checking if temperature is increasing compressor is off and defrost is not taking place under the set temperature limit 
+      elif (((data["DataArray"]["Temp"][index-1]  - data["DataArray"]["Temp"][index] )**2) > diff_set) and (data["DataArray"]["curr"][index] <=0.5*set_curr_high) and (flag_event!=2 ) and (data["DataArray"]["Temp"][index] <= set_temp_high+2):
+            
+		//checking if the door is opened now or previously opened 
+		if(flag_event != 1 ) :
+            	area = 0 
+                  flag_event = 1
+            
+		//Adding area to door opening area   
+            temp_area_calc = [data["DataArray"]["Temp"][index-1] - (set_temp_low) , data["DataArray"]["Temp"][index] - (set_temp_low)]
+            area = area + range_area_temp(temp_area_calc)
+            event = "Door open"
+            cout -- > "Door is open"
+                
+       //checking if temperature is increasing when compressor is on
+       elif (((data["DataArray"]["Temp"][index-1] - data["DataArray"]["Temp"][index])**2) > diff_set ) and (data["DataArray"]["curr"][index] > 0.5 * set_curr_high and data["DataArray"]["curr"][index] < 0.8 * set_curr_high):
+            
+		//checking if the door is opened now or previously opened 
+		if(flag_event != 1 ) :
+            	area = 0 
+                  flag_event = 1
+                    
+            // adding area to the previous door opening area      
+            temp_area_calc = [data["DataArray"]["Temp"][index-1] - (set_temp_low) , data["DataArray"]["Temp"][index] - (set_temp_low)]
+            area = area + range_area_temp(temp_area_calc)
+            event = "Door open"
+            cout -- > Door Open 
+    
+            if (area > 50):
+            	cout -- > "Alert High DO"
+                  event = "High DO"
+            
+       //checking of the the hot air defrost
+	 // PF used to counter the starting current values  
+       elif ((data["DataArray"]["curr"][index] >= 0.8 * set_curr_high) and (data["DataArray"]["Temp"][index-1] <data["DataArray"]["Temp"][index]) and (data["DataArray"]["PF"][index]>0.95)):
+		
+		// checking if door opening was detected previously
+            if (flag_event == 1) :
+            	cout -- > "Door Closed"
+                  area = 0
+                  event = "Door Closed + Defrost"
+                  flag_event = 0
+                        
+             else :
+                  event = "Defrost"
+			cout -- > Defrost
+             
+		// adding the area 
+            temp_area_calc = [data["DataArray"]["Temp"][index-1] - (set_temp_low) , data["DataArray"]["Temp"][index] - (set_temp_low)]
+            area = area + range_area_temp(temp_area_calc)          
+            
+		cout -- > Defrsot
+            
+		//checking if the defrsot is going on for a long duration and area crosses 100
+		if (area > 100):
+            	flag_event = 2
+            
+	// checking for a normal defrost , compressor must be off i.e. value less than 0.5% of rated current and temperature must be incsing above the set_temp_high threashold
+      elif (data["DataArray"]["curr"][index] <= 0.5 * set_curr_high and (data["DataArray"]["Temp"][index] > set_temp_high+2)  and ((data["DataArray"]["Temp"][index]>=data["DataArray"]["Temp"][index-1])))  :
+            
+		cout -- > Normal Defrost
+            if (flag_event == 1) :
+                    cout -- > "Door Closed"
+                    area = 0
+                    event = "Door Closed + Defrost"
+                    flag_event = 0
+                        
+             else :
+                    event = "Defrost"
+                        
+		temp_area_calc = [data["DataArray"]["Temp"][index-1] - (set_temp_low) , data["DataArray"]["Temp"][index] - (set_temp_low)]
+            area = area + range_area_temp(temp_area_calc)
+		
+		//checking if the defrsot is going on for a long duration and area crosses 100
+            if (area > 100):
+                 flag_event = 2
+
+ 
